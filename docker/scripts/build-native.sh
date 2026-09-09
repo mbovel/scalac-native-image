@@ -129,14 +129,33 @@ fi
 # 5. The image itself.
 # ---------------------------------------------------------------------------
 log "native-image (macros=$MACROS, xmx=$NI_XMX, parallelism=$NI_PARALLELISM)"
-# shellcheck disable=SC2086  # NI_OPT is deliberately a word-split option string
-"$NATIVE_IMAGE_CMD" \
-  -cp "$CP$CPSEP$(jpath "$WORK_DIR/classes")" \
-  "-H:ConfigurationFileDirectories=$(jpath "$CONFIG_DIR")" \
-  --no-fallback $NI_OPT "${NI_EXTRA[@]+"${NI_EXTRA[@]}"}" \
-  "-J-Xmx$NI_XMX" "--parallelism=$NI_PARALLELISM" \
-  -o "$(jpath "$OUT_DIR/$NAME")" \
-  ScalacMain
+
+# The entry point lives in $WORK_DIR/classes, and losing that one classpath entry is a confusing
+# failure ("Main entry point class 'ScalacMain' neither found on classpath ... nor modulepath"),
+# so check for it here instead.
+[ -f "$WORK_DIR/classes/ScalacMain.class" ] || die "ScalacMain.class missing from $WORK_DIR/classes"
+
+# Arguments go through an argument file rather than the command line.
+#
+# On Windows the launcher is native-image.cmd, so every argument travels through cmd.exe, which
+# splits on the semicolons that a Windows classpath is made of. That silently dropped the last
+# -cp entry -- $WORK_DIR/classes, and with it ScalacMain -- while leaving the eight compiler jars
+# intact. An argument file is read by the driver itself, so neither the shell nor cmd.exe gets to
+# reinterpret anything. Every path in it comes from jpath, hence forward slashes, which also keeps
+# the argfile parser from treating backslashes as escapes.
+ARGFILE="$WORK_DIR/native-image.args"
+{
+  printf '%s\n' "-cp" "$CP$CPSEP$(jpath "$WORK_DIR/classes")"
+  printf '%s\n' "-H:ConfigurationFileDirectories=$(jpath "$CONFIG_DIR")"
+  printf '%s\n' "--no-fallback"
+  # shellcheck disable=SC2086  # NI_OPT is deliberately a word-split option string
+  for opt in $NI_OPT; do printf '%s\n' "$opt"; done
+  for opt in ${NI_EXTRA[@]+"${NI_EXTRA[@]}"}; do printf '%s\n' "$opt"; done
+  printf '%s\n' "-J-Xmx$NI_XMX" "--parallelism=$NI_PARALLELISM"
+  printf '%s\n' "-o" "$(jpath "$OUT_DIR/$NAME")"
+  printf '%s\n' "ScalacMain"
+} > "$ARGFILE"
+"$NATIVE_IMAGE_CMD" "@$(jpath "$ARGFILE")"
 
 # ---------------------------------------------------------------------------
 # 6. Bundle: the Scala library the produced compiler hands to user code.
