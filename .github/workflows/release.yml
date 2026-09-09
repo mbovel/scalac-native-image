@@ -173,11 +173,28 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # native-image needs the MSVC toolchain to link. The runner has Visual
-      # Studio; this puts it in the environment of every later step.
+      # native-image needs the MSVC toolchain to link. Ask vswhere where Visual Studio is, run its
+      # own vcvars64.bat, and export the four variables the toolchain runs on, so every later step
+      # has them.
+      #
+      # ilammy/msvc-dev-cmd@v1 was doing this and stopped working when the runner image moved to
+      # Visual Studio 2026 (v18): cl.exe was found and compiled, but LIB was missing the MSVC
+      # library directory, so linking died with "LNK1104: cannot open file 'LIBCMT.lib'". Calling
+      # the installation's own vcvars64.bat has no opinion about version numbers or layout.
       - name: Set up MSVC
         if: matrix.os == 'windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        shell: cmd
+        run: |
+          set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+          for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSPATH=%%i"
+          if not defined VSPATH echo No Visual Studio with the x64 C++ tools found & exit /b 1
+          echo Using %VSPATH%
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          if not defined LIB echo vcvars64.bat did not set LIB & exit /b 1
+          >>"%GITHUB_ENV%" echo PATH=%PATH%
+          >>"%GITHUB_ENV%" echo INCLUDE=%INCLUDE%
+          >>"%GITHUB_ENV%" echo LIB=%LIB%
+          >>"%GITHUB_ENV%" echo LIBPATH=%LIBPATH%
 
       # Resolves the latest GraalVM 25.x, which is not necessarily the exact tag
       # the Dockerfile pins (GRAALVM_TAG). Pin java-version precisely, e.g.
