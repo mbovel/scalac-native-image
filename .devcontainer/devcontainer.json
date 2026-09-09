@@ -1,0 +1,66 @@
+// Dev container: Scala 3 compiler + GraalVM native-image experiments, with Claude Code.
+// See README.md for usage.
+{
+  "name": "Scala 3 + GraalVM native-image",
+  "build": {
+    "dockerfile": "Dockerfile",
+    // Pinned tool versions (the Dockerfile has matching defaults for a standalone `docker build`).
+    "args": {
+      // GraalVM Community 25.3.4.1 = JDK 25.0.4.1. Release tags and archive names:
+      // https://github.com/graalvm/graalvm-ce-builds/releases (see the Dockerfile for the naming rules).
+      "GRAALVM_TAG": "graal-25.3.4.1",
+      "GRAALVM_ARTIFACT": "graalvm-community-jdk-25i3-25.0.4.1",
+      // Same as sbt.version in scala3's project/build.properties.
+      "SBT_VERSION": "1.12.1",
+      "COURSIER_VERSION": "2.1.24"
+    }
+  },
+  "features": {
+    // Node is a prerequisite of the Claude Code feature (it installs the CLI with npm).
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "lts"
+    },
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+  "remoteUser": "vscode",
+  "mounts": [
+    // Claude Code state (credentials, settings, .claude.json, session history) in a named volume
+    // specific to this project: sign in once, stay signed in across rebuilds, independent from the
+    // host's ~/.claude and from other projects. Use the same name in another project to share an account.
+    "source=scala3-graal-claude-config,target=/home/vscode/.claude,type=volume",
+    // Dependency caches persisted in named volumes so rebuilds do not re-download the world.
+    "source=scala3-graal-coursier-cache,target=/home/vscode/.cache/coursier,type=volume",
+    "source=scala3-graal-sbt,target=/home/vscode/.sbt,type=volume",
+    "source=scala3-graal-ivy2,target=/home/vscode/.ivy2,type=volume"
+  ],
+  "containerEnv": {
+    // Makes Claude Code keep .claude.json inside the volume too (it lives in $HOME otherwise).
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+    // Make sbt-native-image use the GraalVM at GRAALVM_HOME instead of downloading its own.
+    "NATIVE_IMAGE_INSTALLED": "true"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "scalameta.metals",
+        "anthropic.claude-code"
+      ],
+      "settings": {
+        "metals.javaHome": "/opt/graalvm",
+        "files.watcherExclude": {
+          "**/target/**": true,
+          "**/.bloop/**": true,
+          "**/.metals/**": true,
+          "**/out/**": true
+        },
+        "search.exclude": {
+          "**/target": true,
+          "**/.bloop": true,
+          "**/.metals": true
+        }
+      }
+    }
+  }
+}

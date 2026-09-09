@@ -1,0 +1,65 @@
+Warning: Using a deprecated option --no-fallback from command line. No effect, no replacement available
+Warning: Option 'FallbackThreshold' is deprecated and might be removed in a future release: It no longer has any effect, and no replacement is available. Please refer to the GraalVM release notes.
+========================================================================================================================
+GraalVM Native Image: Generating 'scalac-native-loop' (executable)...
+========================================================================================================================
+For detailed information and explanations on the build output, visit:
+https://github.com/oracle/graal/blob/master/docs/reference-manual/native-image/BuildOutput.md
+------------------------------------------------------------------------------------------------------------------------
+[1/8] Initializing...                                                                                   (4.4s @ 0.64GiB)
+ Builder configuration:
+ - Java version: 25.0.4.1+1, vendor version: GraalVM CE 25.3.4.1+1.1
+ - Graal compiler: optimization level: 2, target machine: x86-64-v3
+ - C compiler: gcc (linux, x86_64, 13.3.0)
+ - Assertions: disabled, system assertions: disabled
+ Image configuration:
+ - Garbage collector: Serial GC (max heap size: 80% of RAM)
+ - Assertions: disabled (class-specific config may apply), system assertions: disabled
+------------------------------------------------------------------------------------------------------------------------
+Build resources:
+ - 24.00GiB of memory (19.1% of system memory, set via '-Xmx24g')
+ - 24 thread(s) (25.0% of 96 available processor(s), set via '--parallelism=24')
+[2/8] Performing analysis...  [*****]                                                                   (9.2s @ 2.09GiB)
+   20,309 types,  32,385 fields, and 102,549 methods found reachable
+      491 types,     254 fields, and     670 methods registered for reflection
+       59 types,      60 fields, and      52 methods registered for JNI access
+       59 resource accesses registered with 171.71KiB total size
+        5 native libraries: dl, m, pthread, rt, z
+[3/8] Building universe...                                                                              (4.9s @ 1.79GiB)
+[4/8] Parsing methods...      [**]                                                                      (2.2s @ 2.71GiB)
+[5/8] Inlining methods...     [***]                                                                     (0.8s @ 2.78GiB)
+[6/8] Compiling methods...    [***]                                                                     (7.7s @ 2.06GiB)
+[7/8] Laying out methods...   [***]                                                                     (7.5s @ 2.72GiB)
+[8/8] Creating image...       [**]                                                                      (3.7s @ 2.95GiB)
+  31.16MiB (47.21%) for code area:    59,932 compilation units
+  29.44MiB (44.60%) for image heap:  327,923 objects and 7 resources
+   5.40MiB ( 8.19%) for other data
+  66.00MiB in total image size, 61.25MiB in total file size
+------------------------------------------------------------------------------------------------------------------------
+Top 10 origins of code area:                                Top 10 object types in image heap:
+   2.72MiB dotty.tools.dotc.core                              10.64MiB byte[] for code metadata
+   2.56MiB dotty.tools.dotc.typer                              5.18MiB byte[] for string data
+   2.45MiB dotty.tools.dotc.transform                          3.22MiB java.base/java.lang.Class
+   1.02MiB dotty.tools.dotc.reporting                          2.54MiB java.base/java.lang.String
+   1.00MiB dotty.tools.dotc.cc                                 2.17MiB o.g.n.runtime/c.o.s.core.hub.DynamicHubCompanion
+ 942.87KiB dotty.tools.dotc.ast                                1.30MiB byte[] for reflection metadata
+ 921.00KiB dotty.tools.backend.jvm                           951.84KiB byte[] for general heap data
+ 881.01KiB scala.collection.immutable                        560.59KiB heap alignment
+ 856.53KiB java.base/java.util                               371.70KiB java.base/java.lang.String[]
+ 765.62KiB dotty.tools.dotc.parsing                          348.30KiB java.base/java.lang.Object[]
+  17.14MiB for 267 more packages                               2.20MiB for 3734 more object types
+------------------------------------------------------------------------------------------------------------------------
+Recommendations:
+ FUTR: Use '--future-defaults=all' to prepare for future releases.
+ HEAP: Set max heap for improved and more predictable memory usage.
+ CPU:  Enable more CPU features with '-march=native' for improved performance.
+------------------------------------------------------------------------------------------------------------------------
+                       3.5s (8.1% of total time) in 120 GCs | Peak RSS: 4.43GiB | CPU load: 17.19
+------------------------------------------------------------------------------------------------------------------------
+Build artifacts:
+ /workspaces/scala3-graal-native-image/repro-8371/scalac-native-loop (executable, 61.25MiB)
+========================================================================================================================
+Finished generating 'scalac-native-loop' in 42.2s.
+
+The build process encountered 2 warnings.
+

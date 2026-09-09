@@ -1,0 +1,32 @@
+# Build-tool and editor state
+.bsp/
+.bloop/
+.metals/
+.scala-build/
+target/
+
+# Upstream clone, not part of this repo
+/repro-8371/scala3-benchmarks/
+
+# Compiled output
+*.class
+*.tasty
+*.jar
+
+# native-image executables
+/repro-8371/scalac-native*
+/repro-8371/probe/jrt-probe
+/repro-8371/probe2/loader-probe-rcl*
+
+# Extracted JDK classes, benchmark and AOT-cache output (regenerable, ~1.5 GB)
+/repro-8371/jdk-classes/
+/repro-8371/aot/
+/repro-8371/b2/
+/repro-8371/b3/
+/repro-8371/bench-out/
+
+# Reachability metadata recorded by the tracing agent (rebuilt by the build scripts)
+/repro-8371/ni-config/
+/repro-8371/ni-config-macro/
+/repro-8371/ni-config-rcl/
+/repro-8371/probe2/cfg/

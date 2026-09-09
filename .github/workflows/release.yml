@@ -1,0 +1,291 @@
+name: Build and publish scalac-native
+
+# Produces, for one Scala version:
+#   - multi-arch Docker images on GHCR (:slim and :macros, linux/amd64 + linux/arm64)
+#   - standalone binaries for Linux x86_64/aarch64, macOS arm64 and Windows x86_64
+#
+# Every job runs the same docker/scripts/build-native.sh. Linux goes through the
+# Dockerfile (so the published binary is byte-for-byte the one inside the image);
+# macOS and Windows run the script directly, because native-image only ever emits
+# a binary for the machine it runs on and there is no Docker on those runners.
+#
+# Not built, and why:
+#   macOS x86_64  GraalVM Community dropped the macos-x64 build at JDK 25. Only
+#                 reachable by pinning GRAALVM_VERSION to 24 on a macos-15-intel
+#                 runner, which would ship a compiler on a different JDK.
+#   Windows arm64 No GraalVM Community windows-aarch64 build exists.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scala-version:
+        description: Scala version to build the compiler from
+        default: "3.9.0"
+      publish-images:
+        description: Push Docker images to GHCR
+        type: boolean
+        default: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  SCALA_VERSION: ${{ inputs.scala-version || '3.9.0' }}
+  GRAALVM_VERSION: "25"
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Linux: build through the Dockerfile, then take both outputs from the one
+  # build. The `artifact` target and the runtime image share every expensive
+  # stage, so the second `docker build` is a cache hit.
+  # ---------------------------------------------------------------------------
+  linux:
+    name: linux-${{ matrix.arch }} ${{ matrix.flavour }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  platform: linux/amd64, runner: ubuntu-24.04,     flavour: slim,   macros: "false", xmx: 12g }
+          - { arch: aarch64, platform: linux/arm64, runner: ubuntu-24.04-arm, flavour: slim,   macros: "false", xmx: 12g }
+          - { arch: x86_64,  platform: linux/amd64, runner: ubuntu-24.04,     flavour: macros, macros: "true",  xmx: 12g }
+          - { arch: aarch64, platform: linux/arm64, runner: ubuntu-24.04-arm, flavour: macros, macros: "true",  xmx: 12g }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: inputs.publish-images != false
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 4-core runners with 16 GB; the defaults in the Dockerfile assume a much
+      # bigger machine. macros peaks around 10.4 GiB of native-image heap.
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: docker
+          load: true
+          tags: scalac-native:${{ matrix.flavour }}
+          build-args: |
+            MACROS=${{ matrix.macros }}
+            SCALA_VERSION=${{ env.SCALA_VERSION }}
+            NI_XMX=${{ matrix.xmx }}
+            NI_PARALLELISM=4
+          cache-from: type=gha,scope=${{ matrix.arch }}-${{ matrix.flavour }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}-${{ matrix.flavour }}
+
+      - name: Smoke-test the image
+        run: bash docker/scripts/smoke-test.sh --docker scalac-native:${{ matrix.flavour }} --macros ${{ matrix.macros }}
+
+      # Cache-hit rebuild of the same graph, stopping at the export stage.
+      - name: Export the standalone binary
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          target: artifact
+          outputs: type=local,dest=bundle
+          build-args: |
+            MACROS=${{ matrix.macros }}
+            SCALA_VERSION=${{ env.SCALA_VERSION }}
+            NI_XMX=${{ matrix.xmx }}
+            NI_PARALLELISM=4
+          cache-from: type=gha,scope=${{ matrix.arch }}-${{ matrix.flavour }}
+
+      - name: Smoke-test the binary
+        run: bash docker/scripts/smoke-test.sh --bundle bundle --macros ${{ matrix.macros }}
+
+      - name: Package
+        run: |
+          name="scalac-native-${{ matrix.flavour }}-linux-${{ matrix.arch }}"
+          mv bundle "$name"
+          tar -czf "$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scalac-native-${{ matrix.flavour }}-linux-${{ matrix.arch }}
+          path: scalac-native-*.tar.gz
+          if-no-files-found: error
+
+      # Pushed by digest so the manifest job can stitch the two arches into one
+      # tag. Building twice would be wasteful, but this is another cache hit.
+      - name: Push by digest
+        if: inputs.publish-images != false
+        uses: docker/build-push-action@v6
+        id: push
+        with:
+          context: docker
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            MACROS=${{ matrix.macros }}
+            SCALA_VERSION=${{ env.SCALA_VERSION }}
+            NI_XMX=${{ matrix.xmx }}
+            NI_PARALLELISM=4
+          cache-from: type=gha,scope=${{ matrix.arch }}-${{ matrix.flavour }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository }}/scalac-native,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Save the digest
+        if: inputs.publish-images != false
+        run: |
+          mkdir -p digests
+          touch "digests/${{ matrix.flavour }}-$(echo '${{ steps.push.outputs.digest }}' | cut -d: -f2)"
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.publish-images != false
+        with:
+          name: digest-${{ matrix.flavour }}-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # macOS and Windows: no Docker, same scripts.
+  #
+  # macos-15 (arm64) is a 3-core / 7 GB runner, so the macros flavour -- which
+  # peaks near 10.4 GiB of native-image heap -- does not fit and is not built
+  # there. Windows and Linux runners have 16 GB and build both.
+  # ---------------------------------------------------------------------------
+  native:
+    name: ${{ matrix.os }}-${{ matrix.arch }} ${{ matrix.flavour }}
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos,   arch: aarch64, runner: macos-15,     flavour: slim,   macros: "false", xmx: 5g }
+          - { os: windows, arch: x86_64,  runner: windows-2025, flavour: slim,   macros: "false", xmx: 12g }
+          - { os: windows, arch: x86_64,  runner: windows-2025, flavour: macros, macros: "true",  xmx: 12g }
+    steps:
+      - uses: actions/checkout@v5
+
+      # native-image needs the MSVC toolchain to link. The runner has Visual
+      # Studio; this puts it in the environment of every later step.
+      - name: Set up MSVC
+        if: matrix.os == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # Resolves the latest GraalVM 25.x, which is not necessarily the exact tag
+      # the Dockerfile pins (GRAALVM_TAG). Pin java-version precisely, e.g.
+      # "25.0.4", if the two ever need to match.
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: ${{ env.GRAALVM_VERSION }}
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          native-image-job-reports: "true"
+
+      - name: Set up coursier
+        uses: coursier/setup-action@v1
+
+      - name: Fetch the compiler
+        run: bash docker/scripts/fetch-compiler.sh "$SCALA_VERSION" cp lib
+
+      - name: Build
+        run: |
+          bash docker/scripts/build-native.sh \
+            --cp-dir cp --lib-dir lib --out-dir bundle \
+            --macros ${{ matrix.macros }} \
+            --xmx ${{ matrix.xmx }}
+
+      - name: Smoke-test the binary
+        run: bash docker/scripts/smoke-test.sh --bundle bundle --macros ${{ matrix.macros }}
+
+      - name: Package
+        run: |
+          name="scalac-native-${{ matrix.flavour }}-${{ matrix.os }}-${{ matrix.arch }}"
+          mv bundle "$name"
+          if [ "${{ matrix.os }}" = windows ]; then
+            7z a "$name.zip" "$name"
+          else
+            tar -czf "$name.tar.gz" "$name"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scalac-native-${{ matrix.flavour }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            scalac-native-*.tar.gz
+            scalac-native-*.zip
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Stitch the per-arch Linux images into one multi-arch tag each.
+  # ---------------------------------------------------------------------------
+  manifest:
+    needs: linux
+    if: inputs.publish-images != false
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        flavour: [slim, macros]
+    steps:
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.flavour }}-*
+          path: digests
+          merge-multiple: true
+
+      - name: Create the manifest list
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository }}/scalac-native
+        run: |
+          tags="-t $IMAGE:${{ matrix.flavour }}"
+          tags="$tags -t $IMAGE:${{ env.SCALA_VERSION }}-${{ matrix.flavour }}"
+          if [ "${{ github.ref_type }}" = tag ]; then
+            tags="$tags -t $IMAGE:${{ github.ref_name }}-${{ matrix.flavour }}"
+          fi
+          if [ "${{ matrix.flavour }}" = slim ]; then
+            tags="$tags -t $IMAGE:latest"
+          fi
+          # shellcheck disable=SC2046
+          docker buildx imagetools create $tags \
+            $(for f in digests/${{ matrix.flavour }}-*; do echo "$IMAGE@sha256:$(basename "$f")"; done)
+          docker buildx imagetools inspect "$IMAGE:${{ matrix.flavour }}"
+
+  # ---------------------------------------------------------------------------
+  # Attach every binary to the GitHub Release, with checksums.
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [linux, native]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scalac-native-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd dist && sha256sum ./* > SHA256SUMS && cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true

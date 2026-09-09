@@ -1,0 +1,68 @@
+Warning: Using a deprecated option --no-fallback from command line. No effect, no replacement available
+Warning: Option 'FallbackThreshold' is deprecated and might be removed in a future release: It no longer has any effect, and no replacement is available. Please refer to the GraalVM release notes.
+========================================================================================================================
+GraalVM Native Image: Generating 'loader-probe-rcl2' (executable)...
+========================================================================================================================
+For detailed information and explanations on the build output, visit:
+https://github.com/oracle/graal/blob/master/docs/reference-manual/native-image/BuildOutput.md
+------------------------------------------------------------------------------------------------------------------------
+[1/8] Initializing...                                                                                   (4.2s @ 0.62GiB)
+ Builder configuration:
+ - Java version: 25.0.4.1+1, vendor version: GraalVM CE 25.3.4.1+1.1
+ - Graal compiler: optimization level: 2, target machine: x86-64-v3
+ - C compiler: gcc (linux, x86_64, 13.3.0)
+ - Assertions: disabled, system assertions: disabled
+ Image configuration:
+ - Garbage collector: Serial GC (max heap size: 80% of RAM)
+ - Assertions: disabled (class-specific config may apply), system assertions: disabled
+------------------------------------------------------------------------------------------------------------------------
+ 1 experimental option(s) unlocked:
+ - '-H:+RuntimeClassLoading' (origin(s): command line)
+------------------------------------------------------------------------------------------------------------------------
+Build resources:
+ - 16.00GiB of memory (12.8% of system memory, set via '-Xmx16g')
+ - 16 thread(s) (16.7% of 96 available processor(s), set via '--parallelism=16')
+[2/8] Performing analysis...  [**********]                                                              (8.0s @ 1.80GiB)
+    7,470 types,   8,894 fields, and  37,288 methods found reachable
+      376 types,     314 fields, and     847 methods registered for reflection
+       63 types,      65 fields, and      55 methods registered for JNI access
+       56 resource accesses registered with 171.33KiB total size
+        5 native libraries: dl, m, pthread, rt, z
+[3/8] Building universe...                                                                              (1.9s @ 1.64GiB)
+[4/8] Parsing methods...      [*]                                                                       (1.5s @ 2.29GiB)
+[5/8] Inlining methods...     [***]                                                                     (0.4s @ 2.28GiB)
+[6/8] Compiling methods...    [***]                                                                     (6.4s @ 1.68GiB)
+[7/8] Laying out methods...   [**]                                                                      (3.1s @ 1.80GiB)
+[8/8] Creating image...       [***]                                                                     (5.2s @ 1.75GiB)
+  16.93MiB (28.17%) for code area:    25,507 compilation units
+  40.25MiB (67.00%) for image heap:  876,047 objects and 5 resources
+   2.90MiB ( 4.82%) for other data
+  60.07MiB in total image size, 57.88MiB in total file size
+------------------------------------------------------------------------------------------------------------------------
+Top 10 origins of code area:                                Top 10 object types in image heap:
+   1.31MiB java.base/java.util                                 6.57MiB o.g.n.runtime/c.o.s.i.m.Interpreter~edJavaMethod
+ 825.22KiB java.base/jdk.internal.classfile.impl               4.78MiB java.base/int[]
+ 630.75KiB java.base/java.lang.invoke                          4.41MiB byte[] for code metadata
+ 617.25KiB java.base/sun.util.resources.cldr                   3.56MiB byte[] for general heap data
+ 548.70KiB java.base/java.lang                                 2.64MiB byte[] for string data
+ 537.45KiB java.base/com.sun.crypto.provider                   1.64MiB o.g.n.runtime/c.o.s.i.metadata.ReferenceConstant
+ 520.43KiB java.base/sun.util.resources                        1.60MiB java.base/java.lang.Class
+ 513.19KiB scala.collection.immutable                          1.49MiB java.base/java.lang.String
+ 507.13KiB java.base/java.text                                 1.43MiB j.i.vm.ci/jdk.vm.ci.meta.LineNumberTable
+ 464.46KiB java.base/java.util.concurrent                      1.40MiB o.g.e.s.svm/c.o.s.e.classfile.descriptors.Symbol
+  10.57MiB for 248 more packages                              10.73MiB for 1989 more object types
+------------------------------------------------------------------------------------------------------------------------
+Recommendations:
+ FUTR: Use '--future-defaults=all' to prepare for future releases.
+ HEAP: Set max heap for improved and more predictable memory usage.
+ CPU:  Enable more CPU features with '-march=native' for improved performance.
+------------------------------------------------------------------------------------------------------------------------
+                       2.9s (8.6% of total time) in 57 GCs | Peak RSS: 3.88GiB | CPU load: 14.81
+------------------------------------------------------------------------------------------------------------------------
+Build artifacts:
+ /workspaces/scala3-graal-native-image/repro-8371/probe2/loader-probe-rcl2 (executable, 57.88MiB)
+========================================================================================================================
+Finished generating 'loader-probe-rcl2' in 32.6s.
+
+The build process encountered 2 warnings.
+
