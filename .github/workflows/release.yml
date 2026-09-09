@@ -156,6 +156,13 @@ jobs:
   # macos-15 (arm64) is a 3-core / 7 GB runner, so the macros flavour -- which
   # peaks near 10.4 GiB of native-image heap -- does not fit and is not built
   # there. Windows and Linux runners have 16 GB and build both.
+  #
+  # Windows is pinned to windows-2022 (Visual Studio 2022). windows-2025 moved to Visual Studio
+  # 2026 in June 2026, and native-image cannot link there: its own query code is compiled with
+  # the static CRT, and 14.51.36231\lib\x64 appears to carry only the enclave build of
+  # libcmt.lib, so linking dies with "LNK1104: cannot open file 'LIBCMT.lib'". GitHub said in
+  # mid-2025 that windows-2022 stays supported for about three years, so this is not urgent, but
+  # it does mean VS 2026 is untested until someone revisits it.
   # ---------------------------------------------------------------------------
   native:
     name: ${{ matrix.os }}-${{ matrix.arch }} ${{ matrix.flavour }}
@@ -168,8 +175,8 @@ jobs:
       matrix:
         include:
           - { os: macos,   arch: aarch64, runner: macos-15,     flavour: slim,   macros: "false", xmx: 5g }
-          - { os: windows, arch: x86_64,  runner: windows-2025, flavour: slim,   macros: "false", xmx: 12g }
-          - { os: windows, arch: x86_64,  runner: windows-2025, flavour: macros, macros: "true",  xmx: 12g }
+          - { os: windows, arch: x86_64,  runner: windows-2022, flavour: slim,   macros: "false", xmx: 12g }
+          - { os: windows, arch: x86_64,  runner: windows-2022, flavour: macros, macros: "true",  xmx: 12g }
     steps:
       - uses: actions/checkout@v5
 

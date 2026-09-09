@@ -71,9 +71,14 @@ is inside the published image. Platform coverage:
 | Linux x86_64 | Dockerfile on `ubuntu-24.04` | also the `linux/amd64` image |
 | Linux aarch64 | Dockerfile on `ubuntu-24.04-arm` | also the `linux/arm64` image |
 | macOS arm64 | scripts on `macos-15` | slim only: a 7 GB runner, and macros peaks near 10.4 GiB |
-| Windows x86_64 | scripts on `windows-2025` | needs the MSVC toolchain for linking |
+| Windows x86_64 | scripts on `windows-2022` | MSVC toolchain for linking; not `windows-2025`, see below |
 | macOS x86_64 | not built | GraalVM Community dropped `macos-x64` at JDK 25 |
 | Windows arm64 | not built | no GraalVM Community `windows-aarch64` build exists |
+
+The Windows job is pinned to `windows-2022`. `windows-2025` moved to Visual Studio 2026 in June
+2026, where native-image fails to link its own query code with `LNK1104: cannot open file
+'LIBCMT.lib'` -- that toolset's `lib\x64` appears to ship only the enclave build of the static
+CRT. Unpinning needs that resolved first.
 
 Do not build the arm64 image with QEMU emulation on an x86 runner. native-image
 under emulation is extremely slow and unreliable; use the native arm64 runner,
