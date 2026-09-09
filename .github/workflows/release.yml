@@ -198,15 +198,20 @@ jobs:
           rem
           rem `dir /s` recurses from the directory it is given looking for the *file* pattern; it
           rem does not expand wildcards in intermediate directories, so the root has to be the
-          rem MSVC directory and the x64 build picked out of the results afterwards.
+          rem MSVC directory and the right copy picked out of the results afterwards.
+          rem
+          rem Match the path exactly. Matching "x64" loosely picks up lib\x64\enclave\libcmt.lib,
+          rem which is the enclave build and not what a normal link wants.
+          echo Every libcmt.lib in the installation:
+          dir /b /s "%VSPATH%\VC\Tools\MSVC\libcmt.lib" 2>nul
           set "CRTDIR="
-          for /f "usebackq delims=" %%i in (`dir /b /s "%VSPATH%\VC\Tools\MSVC\libcmt.lib" 2^>nul ^| findstr /i /c:"x64"`) do set "CRTDIR=%%~dpi"
+          for /f "usebackq delims=" %%i in (`dir /b /s "%VSPATH%\VC\Tools\MSVC\libcmt.lib" 2^>nul ^| findstr /i /e /c:"\lib\x64\libcmt.lib"`) do set "CRTDIR=%%~dpi"
           if not defined CRTDIR (
-            echo Could not find an x64 libcmt.lib under "%VSPATH%\VC\Tools\MSVC"
-            echo Toolsets present:
-            dir /b "%VSPATH%\VC\Tools\MSVC"
-            echo Every libcmt.lib found:
-            dir /b /s "%VSPATH%\VC\Tools\MSVC\libcmt.lib" 2>nul
+            echo No toolset provides lib\x64\libcmt.lib. What each one does have:
+            for /d %%t in ("%VSPATH%\VC\Tools\MSVC\*") do (
+              echo === %%~nxt
+              dir /b "%%t\lib\x64" 2>nul
+            )
             exit /b 1
           )
           echo Static CRT: %CRTDIR%
