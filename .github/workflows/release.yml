@@ -191,17 +191,22 @@ jobs:
           echo Using %VSPATH%
           call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
           if not defined LIB echo vcvars64.bat did not set LIB & exit /b 1
-          rem The runner's VS 2026 install carries more than one MSVC toolset -- cl.exe comes from
-          rem 14.51.36231 while link.exe reports 14.51.36256 -- and linking died with
+          rem The runner installs three MSVC toolsets (14.29, 14.44, 14.51) and linking died with
           rem "LNK1104: cannot open file 'LIBCMT.lib'" even though LIB pointed at a lib\x64 that
           rem should hold it. Find the static CRT wherever it actually is and put that directory
           rem first, or fail saying what is on disk instead of leaving it to the linker.
+          rem
+          rem `dir /s` recurses from the directory it is given looking for the *file* pattern; it
+          rem does not expand wildcards in intermediate directories, so the root has to be the
+          rem MSVC directory and the x64 build picked out of the results afterwards.
           set "CRTDIR="
-          for /f "usebackq delims=" %%i in (`dir /b /s "%VSPATH%\VC\Tools\MSVC\*\lib\x64\libcmt.lib" 2^>nul`) do set "CRTDIR=%%~dpi"
+          for /f "usebackq delims=" %%i in (`dir /b /s "%VSPATH%\VC\Tools\MSVC\libcmt.lib" 2^>nul ^| findstr /i /c:"x64"`) do set "CRTDIR=%%~dpi"
           if not defined CRTDIR (
-            echo Could not find libcmt.lib under "%VSPATH%\VC\Tools\MSVC"
+            echo Could not find an x64 libcmt.lib under "%VSPATH%\VC\Tools\MSVC"
             echo Toolsets present:
             dir /b "%VSPATH%\VC\Tools\MSVC"
+            echo Every libcmt.lib found:
+            dir /b /s "%VSPATH%\VC\Tools\MSVC\libcmt.lib" 2>nul
             exit /b 1
           )
           echo Static CRT: %CRTDIR%

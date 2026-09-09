@@ -44,9 +44,15 @@ It needs `java` (JDK 24+ for the AOT cache — without it `jvm-aot` is skipped a
   question to ask of either. Just do not assume the native side is flat: check the curve in
   `logs/warm-<benchmark>-<config>.log` before trusting a number.
 
-  Known limitation: scala3-benchmarks itself uses a per-benchmark iteration count, 180 for hello
-  world. One count for every benchmark means the small and mid-sized ones are the least
-  converged, which is exactly where both of the surprises above turned up.
+> [!WARNING]
+> 20 compiles is still not enough for the smaller benchmarks. Between the mean of iterations
+> 8-13 and that of 14-19, `dottyUtil`, `helloWorld` and `areWeFastYet` were still gaining 9-11%,
+> with their minima at iteration 17-19, so their warm numbers are upper bounds rather than steady
+> state. `tastyQuery`, `re2s`, `scalaz` and `sourcecode` are converged at 0-3%.
+>
+> scala3-benchmarks itself uses a per-benchmark iteration count -- 180 for hello world. Using one
+> count for everything is the simplification made here, and the small and mid-sized benchmarks are
+> exactly where both of the surprises above turned up.
 
 The JVM half of the warm loop is [`Loop.java`](Loop.java). The native half is built into the
 shipped binary: `SCALAC_BENCH_ITERATIONS=N` makes it compile its arguments N times in one
