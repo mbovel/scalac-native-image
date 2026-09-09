@@ -1,7 +1,7 @@
-name: Build and publish scalac-native
+name: Build and publish scalac-native-image
 
 # Produces, for one Scala version:
-#   - multi-arch Docker images on GHCR (:slim and :macros, linux/amd64 + linux/arm64)
+#   - multi-arch Docker images on Docker Hub (:slim and :macros, linux/amd64 + linux/arm64)
 #   - standalone binaries for Linux x86_64/aarch64, macOS arm64 and Windows x86_64
 #
 # Every job runs the same docker/scripts/build-native.sh. Linux goes through the
@@ -22,7 +22,7 @@ on:
         description: Scala version to build the compiler from
         default: "3.9.0"
       publish-images:
-        description: Push Docker images to GHCR
+        description: Push Docker images to Docker Hub
         type: boolean
         default: true
   push:
@@ -34,7 +34,9 @@ permissions:
 env:
   SCALA_VERSION: ${{ inputs.scala-version || '3.9.0' }}
   GRAALVM_VERSION: "25"
-  REGISTRY: ghcr.io
+  # Docker Hub. Pushing needs the DOCKERHUB_TOKEN secret (a Docker Hub access token with
+  # Read & Write on this repository); without it, run with publish-images off.
+  IMAGE: docker.io/mbovel/scalac-native-image
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -47,7 +49,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
-      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -61,13 +62,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: Log in to Docker Hub
         if: inputs.publish-images != false
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: mbovel
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # 4-core runners with 16 GB; the defaults in the Dockerfile assume a much
       # bigger machine. macros peaks around 10.4 GiB of native-image heap.
@@ -77,7 +77,7 @@ jobs:
         with:
           context: docker
           load: true
-          tags: scalac-native:${{ matrix.flavour }}
+          tags: scalac-native-image:${{ matrix.flavour }}
           build-args: |
             MACROS=${{ matrix.macros }}
             SCALA_VERSION=${{ env.SCALA_VERSION }}
@@ -87,7 +87,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}-${{ matrix.flavour }}
 
       - name: Smoke-test the image
-        run: bash docker/scripts/smoke-test.sh --docker scalac-native:${{ matrix.flavour }} --macros ${{ matrix.macros }}
+        run: bash docker/scripts/smoke-test.sh --docker scalac-native-image:${{ matrix.flavour }} --macros ${{ matrix.macros }}
 
       # Cache-hit rebuild of the same graph, stopping at the export stage.
       - name: Export the standalone binary
@@ -108,14 +108,14 @@ jobs:
 
       - name: Package
         run: |
-          name="scalac-native-${{ matrix.flavour }}-linux-${{ matrix.arch }}"
+          name="scalac-native-image-${{ matrix.flavour }}-linux-${{ matrix.arch }}"
           mv bundle "$name"
           tar -czf "$name.tar.gz" "$name"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: scalac-native-${{ matrix.flavour }}-linux-${{ matrix.arch }}
-          path: scalac-native-*.tar.gz
+          name: scalac-native-image-${{ matrix.flavour }}-linux-${{ matrix.arch }}
+          path: scalac-native-image-*.tar.gz
           if-no-files-found: error
 
       # Pushed by digest so the manifest job can stitch the two arches into one
@@ -133,7 +133,7 @@ jobs:
             NI_XMX=${{ matrix.xmx }}
             NI_PARALLELISM=4
           cache-from: type=gha,scope=${{ matrix.arch }}-${{ matrix.flavour }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository }}/scalac-native,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
       - name: Save the digest
         if: inputs.publish-images != false
@@ -206,7 +206,7 @@ jobs:
 
       - name: Package
         run: |
-          name="scalac-native-${{ matrix.flavour }}-${{ matrix.os }}-${{ matrix.arch }}"
+          name="scalac-native-image-${{ matrix.flavour }}-${{ matrix.os }}-${{ matrix.arch }}"
           mv bundle "$name"
           if [ "${{ matrix.os }}" = windows ]; then
             7z a "$name.zip" "$name"
@@ -216,10 +216,10 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: scalac-native-${{ matrix.flavour }}-${{ matrix.os }}-${{ matrix.arch }}
+          name: scalac-native-image-${{ matrix.flavour }}-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            scalac-native-*.tar.gz
-            scalac-native-*.zip
+            scalac-native-image-*.tar.gz
+            scalac-native-image-*.zip
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -229,8 +229,6 @@ jobs:
     needs: linux
     if: inputs.publish-images != false
     runs-on: ubuntu-24.04
-    permissions:
-      packages: write
     strategy:
       matrix:
         flavour: [slim, macros]
@@ -239,9 +237,8 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: mbovel
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -250,9 +247,8 @@ jobs:
           merge-multiple: true
 
       - name: Create the manifest list
-        env:
-          IMAGE: ${{ env.REGISTRY }}/${{ github.repository }}/scalac-native
         run: |
+          IMAGE="${{ env.IMAGE }}"
           tags="-t $IMAGE:${{ matrix.flavour }}"
           tags="$tags -t $IMAGE:${{ env.SCALA_VERSION }}-${{ matrix.flavour }}"
           if [ "${{ github.ref_type }}" = tag ]; then
@@ -278,7 +274,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: scalac-native-*
+          pattern: scalac-native-image-*
           path: dist
           merge-multiple: true
 

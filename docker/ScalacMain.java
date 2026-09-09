@@ -38,7 +38,42 @@ public final class ScalacMain {
     }
 
     out.addAll(Arrays.asList(args));
-    dotty.tools.dotc.Main.main(out.toArray(new String[0]));
+    String[] full = out.toArray(new String[0]);
+
+    int iterations = benchIterations();
+    if (iterations > 0) bench(iterations, full);
+    else dotty.tools.dotc.Main.main(full);
+  }
+
+  /**
+   * SCALAC_BENCH_ITERATIONS=N compiles the same arguments N times in one process, printing
+   * "iter i: T ms" for each. That is how bench/eval.sh measures warm time against the shipped
+   * binary instead of a purpose-built one -- a native image has no JIT to warm up, but it does
+   * pay startup and JDK-classpath scanning once, and this separates the two.
+   *
+   * Unset or unparseable means normal single-shot operation, so nothing changes for real use.
+   */
+  private static int benchIterations() {
+    String v = System.getenv("SCALAC_BENCH_ITERATIONS");
+    if (v == null || v.isBlank()) return 0;
+    try {
+      return Math.max(0, Integer.parseInt(v.trim()));
+    } catch (NumberFormatException e) {
+      return 0;
+    }
+  }
+
+  /** Driver.process, not Main.main: the latter calls System.exit on the first failed compile. */
+  private static void bench(int iterations, String[] args) {
+    boolean errors = false;
+    for (int i = 0; i < iterations; i++) {
+      long t0 = System.nanoTime();
+      dotty.tools.dotc.reporting.Reporter reporter = new dotty.tools.dotc.Driver().process(args);
+      long ms = (System.nanoTime() - t0) / 1_000_000;
+      errors |= reporter.hasErrors();
+      System.out.println("iter " + i + ": " + ms + " ms" + (reporter.hasErrors() ? "  [ERRORS]" : ""));
+    }
+    if (errors) System.exit(1);
   }
 
   private static Path imageDir() {

@@ -1,0 +1,119 @@
+name: Evaluation dry run
+
+# Proves bench/eval.sh still runs end to end: it builds both flavours, compiles the same sources
+# with all four configurations, and checks every native configuration's output byte-for-byte
+# against the JVM's. That last check is the point -- a native image missing reachability metadata
+# still exits zero while emitting class files that fail verification, so "it compiled" is not a
+# pass. eval.sh exits non-zero if any output differs.
+#
+# The timings it prints here are NOT the numbers in the README. A shared 4-core runner with noisy
+# neighbours is fine for detecting "the script broke" and useless for "native is 8.2x faster".
+# The README's table comes from a quiet machine; see bench/README.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scala-version:
+        description: Scala version to build the compiler from
+        default: "3.9.0"
+      benchmarks:
+        description: Comma-separated benchmark subset
+        default: "helloWorld,sourcecode"
+  pull_request:
+    paths:
+      - "bench/**"
+      - "docker/**"
+      - ".github/workflows/bench.yml"
+  push:
+    branches: [main]
+    paths:
+      - "bench/**"
+      - "docker/**"
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SCALA_VERSION: ${{ inputs.scala-version || '3.9.0' }}
+      BENCHMARKS: ${{ inputs.benchmarks || 'helloWorld,sourcecode' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Set up a JDK with the AOT cache
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: "25"
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: coursier/setup-action@v1
+
+      # Both flavours, as the two native configurations under evaluation. Separate cache scopes
+      # from release.yml: this workflow bounds the builder down to what a 4-core/16 GB runner has,
+      # and the macros flavour alone peaks near 10.4 GiB of native-image heap.
+      - name: Build the closed-world bundle
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          target: artifact
+          outputs: type=local,dest=bundle-slim
+          build-args: |
+            MACROS=false
+            SCALA_VERSION=${{ env.SCALA_VERSION }}
+            NI_XMX=12g
+            NI_PARALLELISM=4
+          cache-from: type=gha,scope=bench-slim
+          cache-to: type=gha,mode=max,scope=bench-slim
+
+      - name: Build the RuntimeClassLoading bundle
+        uses: docker/build-push-action@v6
+        with:
+          context: docker
+          target: artifact
+          outputs: type=local,dest=bundle-rcl
+          build-args: |
+            MACROS=true
+            SCALA_VERSION=${{ env.SCALA_VERSION }}
+            NI_XMX=12g
+            NI_PARALLELISM=4
+          cache-from: type=gha,scope=bench-macros
+          cache-to: type=gha,mode=max,scope=bench-macros
+
+      # docker build --output does not preserve the executable bit.
+      - name: Make the bundles executable
+        run: chmod +x bundle-slim/scalac bundle-rcl/scalac
+
+      - name: Run the evaluation
+        run: |
+          bash bench/eval.sh \
+            --slim bundle-slim --rcl bundle-rcl \
+            --scala-version "$SCALA_VERSION" \
+            --benchmarks "$BENCHMARKS" \
+            --reps 1 --iterations 3 --warm-tail 1 \
+            --work-dir bench-work \
+            --out report.md
+
+      - name: Publish the report
+        if: always()
+        run: |
+          {
+            echo "> Timings from a shared CI runner. The README's numbers come from a quiet"
+            echo "> machine; this job exists to prove the script runs and the output still matches."
+            echo
+            cat report.md 2>/dev/null || echo "The evaluation produced no report."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evaluation-dry-run
+          path: |
+            report.md
+            bench-work/logs
+          if-no-files-found: warn

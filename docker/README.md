@@ -5,11 +5,14 @@ in two published flavours:
 
 | tag | build | binary | image (approx) | macros |
 | --- | --- | ---: | ---: | --- |
-| `:slim` | `docker build -t scalac-native:slim .` | 113 MB | ~215 MB | no |
-| `:macros` | `docker build -t scalac-native:macros --build-arg MACROS=true .` | 452 MB | ~555 MB | yes |
+| `:slim` | `docker build -t scalac-native-image:slim .` | 113 MB | ~215 MB | no |
+| `:macros` | `docker build -t scalac-native-image:macros --build-arg MACROS=true .` | 452 MB | ~555 MB | yes |
+
+Published to Docker Hub as `mbovel/scalac-native-image`; the tags above are what a local
+`docker build` produces.
 
 ```bash
-docker run --rm -v "$PWD:/src" -w /src scalac-native:slim -d out hello.scala
+docker run --rm -v "$PWD:/src" -w /src mbovel/scalac-native-image:slim -d out hello.scala
 ```
 
 No flags needed: the entry point supplies `-bootclasspath` and a default
@@ -96,6 +99,12 @@ Use a **jar**, not the `jimage`-extracted directory: dotc rescans that 250 MB
 tree on every invocation, costing a flat ~0.14 s, which is two thirds of a
 hello-world compile.
 
+`ScalacMain` also honours `SCALAC_BENCH_ITERATIONS=N`, which compiles the given
+arguments N times in one process and prints `iter i: T ms` for each. That is how
+[bench/](../bench/README.md) measures warm time against the shipped binary
+rather than against a second image built only for benchmarking. Unset -- which
+it is for every normal invocation -- nothing changes.
+
 ## The `MACROS` build arg
 
 Macro expansion loads and runs the macro implementation's class file, which a
@@ -114,15 +123,11 @@ all three are required, and each one only reveals the next failure if missing:
    scala/quoted/Expr$.MODULE$` or `Unable to call AOT method:
    ConcurrentHashMap.<init>`.
 
-Measured cost (best of 3 cold runs, byte-identical output in every case):
-
-| benchmark | jvm | `:slim` | `:macros` |
-| --- | ---: | ---: | ---: |
-| helloWorld | 1.60 s | 0.06 s | 0.10 s |
-| dottyUtil | 4.91 s | 0.55 s | 0.78 s |
-| re2s | 4.90 s | 0.88 s | 1.24 s |
-| tastyQuery | 8.99 s | 2.61 s | 3.64 s |
-| sourcecode (macros) | 4.40 s | **broken** | 0.71 s |
+Runtime class loading is not free: `:macros` runs about 1.4x slower than `:slim` at the same
+optimisation level, roughly doubles peak RSS, and grows the binary from 113 MB to 452 MB and the
+build from ~1 to ~3 minutes. The measured per-benchmark numbers are in the
+[top-level README](../README.md#results), produced by [bench/](../bench/README.md); they are kept
+in one place rather than duplicated here.
 
 `:slim` does not fail loudly on macro code -- it emits the macro-*defining*
 class files and then errors on every use site, with the misleading message
@@ -146,7 +151,7 @@ slower to build and was not measured here.
   are not catastrophic. Use for testing an unreleased compiler:
 
 ```bash
-docker build -t scalac-native:dev \
+docker build -t scalac-native-image:dev \
   --build-arg COMPILER_SOURCE=git --build-arg DOTTY_REF=main .
 ```
 
@@ -158,7 +163,7 @@ so the published image dies with SIGILL on anything older. Only use it for image
 you build and run on the same machine:
 
 ```bash
-docker build --build-arg NI_OPT="-O3 -march=native" -t scalac-native:local .
+docker build --build-arg NI_OPT="-O3 -march=native" -t scalac-native-image:local .
 ```
 
 `NI_XMX` (default `16g`) and `NI_PARALLELISM` (default `8`) bound the builder;
