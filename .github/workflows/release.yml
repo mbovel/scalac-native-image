@@ -191,6 +191,21 @@ jobs:
           echo Using %VSPATH%
           call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
           if not defined LIB echo vcvars64.bat did not set LIB & exit /b 1
+          rem The runner's VS 2026 install carries more than one MSVC toolset -- cl.exe comes from
+          rem 14.51.36231 while link.exe reports 14.51.36256 -- and linking died with
+          rem "LNK1104: cannot open file 'LIBCMT.lib'" even though LIB pointed at a lib\x64 that
+          rem should hold it. Find the static CRT wherever it actually is and put that directory
+          rem first, or fail saying what is on disk instead of leaving it to the linker.
+          set "CRTDIR="
+          for /f "usebackq delims=" %%i in (`dir /b /s "%VSPATH%\VC\Tools\MSVC\*\lib\x64\libcmt.lib" 2^>nul`) do set "CRTDIR=%%~dpi"
+          if not defined CRTDIR (
+            echo Could not find libcmt.lib under "%VSPATH%\VC\Tools\MSVC"
+            echo Toolsets present:
+            dir /b "%VSPATH%\VC\Tools\MSVC"
+            exit /b 1
+          )
+          echo Static CRT: %CRTDIR%
+          set "LIB=%CRTDIR%;%LIB%"
           >>"%GITHUB_ENV%" echo PATH=%PATH%
           >>"%GITHUB_ENV%" echo INCLUDE=%INCLUDE%
           >>"%GITHUB_ENV%" echo LIB=%LIB%
