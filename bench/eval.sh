@@ -8,7 +8,8 @@
 #   native-rcl-O3   the :macros image -- native-image -O3 with -H:+RuntimeClassLoading
 #
 #   cold = best of N fresh processes
-#   warm = min of the last K of M iterations compiled in one process
+#   warm = min of the last K of M compiles in one process. Both sides get the same M: the JVM is
+#          warming a JIT, and the images turn out to have a smaller but real curve of their own
 #
 # Every configuration compiles the same sources with the same flags, and every configuration's
 # output is diffed against the JVM's, because a native image that is missing reachability
@@ -28,8 +29,8 @@
 #   --bench-sources DIR  scala3-benchmarks/bench-sources (default: clone at the pinned commit)
 #   --benchmarks LIST    comma-separated subset of the names below
 #   --reps N             cold repetitions, best of (default 3)
-#   --iterations M       in-process iterations for the warm measurement (default 12)
-#   --warm-tail K        warm time is the min of the last K iterations (default 5)
+#   --iterations M       in-process compiles for the warm measurement (default 20)
+#   --warm-tail K        warm time is the min of the last K of those (default 5)
 #   --skip-cold          / --skip-warm
 #   --quick              helloWorld,sourcecode with 1 rep and 3 iterations: proves the script runs
 #   --work-dir DIR       scratch (default: a temporary directory, removed on exit)
@@ -52,8 +53,8 @@ BENCH_REF=99ac20c5476e16dd70037ddd0c0f4d17e894c694
 
 SCALA_VERSION=3.9.0
 SLIM_DIR= RCL_DIR= CP_DIR= BENCH_SRC= WORK_DIR= OUT_FILE=
-BENCHMARKS=helloWorld,dottyUtil,re2s,tastyQuery,sourcecode
-REPS=3 ITERATIONS=12 WARM_TAIL=5
+BENCHMARKS=helloWorld,dottyUtil,areWeFastYet,re2s,tastyQuery,scalaz,sourcecode
+REPS=3 ITERATIONS=20 WARM_TAIL=5
 DO_COLD=1 DO_WARM=1
 
 die() { echo "eval.sh: $*" >&2; exit 2; }
@@ -74,7 +75,7 @@ while [ $# -gt 0 ]; do
     --quick)         BENCHMARKS=helloWorld,sourcecode; REPS=1; ITERATIONS=3; WARM_TAIL=1; shift ;;
     --work-dir)      WORK_DIR="$2"; shift 2 ;;
     --out)           OUT_FILE="$2"; shift 2 ;;
-    -h|--help)       sed -n '2,36p' "$0"; exit 0 ;;
+    -h|--help)       sed -n '2,37p' "$0"; exit 0 ;;
     *)               die "unknown argument: $1" ;;
   esac
 done
@@ -153,14 +154,25 @@ srcs_of() {
     dottyUtil)  find "$BENCH_SRC/dottyUtil" -name '*.scala' | sort ;;
     re2s)       find "$BENCH_SRC/re2s" -name '*.scala' | sort ;;
     tastyQuery) find "$BENCH_SRC/tastyQuery/tasty-query" -name '*.scala' | sort ;;
+    scalaz)     find "$BENCH_SRC/scalaz" -name '*.scala' | sort ;;
+    areWeFastYet) find "$BENCH_SRC/areWeFastYet" -name '*.scala' | sort ;;
     sourcecode) find "$BENCH_SRC/sourcecode/src" "$BENCH_SRC/sourcecode/src-3" \
                      "$BENCH_SRC/sourcecode/test/src" "$BENCH_SRC/sourcecode/test/src-3" \
                      -name '*.scala' | sort ;;
     *) die "unknown benchmark: $1" ;;
   esac
 }
-# tastyQuery is the one benchmark its build.sbt compiles with extra flags.
-extra_of() { [ "$1" = tastyQuery ] && printf '%s\n%s\n' -Yexplicit-nulls '-Wconf:msg=Unnecessary .nn:s'; }
+# Per-benchmark flags, copied from the sbt project definitions. Two of these are conditional on
+# the compiler version upstream -- `-Xkind-projector` only above 3.4, the `-opt` pair only from
+# 3.8.4 -- so they are right for the default 3.9.0 and would need revisiting under an older
+# --scala-version.
+extra_of() {
+  case "$1" in
+    tastyQuery)   printf '%s\n' -Yexplicit-nulls '-Wconf:msg=Unnecessary .nn:s' ;;
+    scalaz)       printf '%s\n' -nowarn -source 3.0 -Xkind-projector -language:implicitConversions ;;
+    areWeFastYet) printf '%s\n' -opt '-opt-inline:**,!java.**' ;;
+  esac
+}
 
 # Benchmarks whose sources expand macros. A closed-world image cannot load and run a macro
 # implementation's class file, so native-O3 is *expected* to fail on these -- that is the
@@ -256,7 +268,7 @@ fi
 # JVM's output, and then run warm. The order of LABELS matters -- jvm comes first, so its output
 # is on disk to diff the others against.
 # ---------------------------------------------------------------------------
-log "per configuration: cold seconds (best of $REPS) / warm ms (min of the last $WARM_TAIL of $ITERATIONS)"
+log "per configuration: cold s (best of $REPS) / warm ms (min of the last $WARM_TAIL of $ITERATIONS)"
 for name in "${NAMES[@]}"; do
   mapfile -t SRCS < <(srcs_of "$name"); mapfile -t X < <(extra_of "$name")
   ARGS=(-classpath "$LIBCP" "${SHARED[@]}" ${X[@]+"${X[@]}"})
@@ -334,7 +346,8 @@ report() {
   echo "- corpus: $CORPUS_DESC, same source selections and flags as its \`build.sbt\`"
   echo "- host: $(uname -s) $(uname -m), $(cpu_count) CPUs"
   echo "- \`java -version\`: $(java -version 2>&1 | head -1 | tr -d '\r')"
-  echo "- cold: best of $REPS fresh processes. warm: min of the last $WARM_TAIL of $ITERATIONS in-process iterations."
+  echo "- cold: best of $REPS fresh processes."
+  echo "- warm: min of the last $WARM_TAIL of $ITERATIONS in-process compiles, same on both sides."
   echo "- \"identical\" means the emitted class files and TASTy are byte-for-byte the JVM's."
   echo
 

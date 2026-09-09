@@ -31,39 +31,47 @@ sounds — see [step 1](#1-record-reachability-metadata-with-the-tracing-agent).
 
 ### Cold — best of 3 fresh processes
 
-| benchmark | files | jvm | jvm-aot | native-O3 | native-rcl-O3 |
+| benchmark | LOC | jvm | jvm-aot | native-O3 | native-rcl-O3 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| helloWorld | 1 | 1.53 s | 0.73 s | **0.07 s** | 0.10 s |
-| dottyUtil | 34 | 4.43 s | 2.53 s | **0.55 s** | 0.76 s |
-| re2s | 17 | 4.50 s | 2.49 s | **0.89 s** | 1.25 s |
-| tastyQuery | 49 | 8.34 s | 5.12 s | **2.64 s** | 3.66 s |
-| sourcecode (macros) | 20 | 4.06 s | 2.28 s | cannot | **0.69 s** |
+| helloWorld | 5 | 1.50 s | 0.71 s | **0.07 s** | 0.10 s |
+| dottyUtil | 3'119 | 4.45 s | 2.55 s | **0.55 s** | 0.77 s |
+| areWeFastYet | 4'590 | 4.52 s | 2.70 s | **0.82 s** | 1.06 s |
+| re2s | 11'027 | 4.41 s | 2.50 s | **0.89 s** | 1.25 s |
+| tastyQuery | 18'912 | 8.41 s | 5.13 s | **2.59 s** | 3.62 s |
+| scalaz | 40'633 | 19.04 s | **13.40 s** | 19.73 s | 27.55 s |
+| sourcecode (macros) | 807 | 4.09 s | 2.33 s | cannot | **0.69 s** |
 
-### Warm — min of the last 5 of 12 compiles in one process
+### Warm — min of the last 5 of 20 compiles in one process
 
 | benchmark | jvm | jvm-aot | native-O3 | native-rcl-O3 |
 | --- | ---: | ---: | ---: | ---: |
-| helloWorld | 82 ms | 94 ms | **33 ms** | 44 ms |
-| dottyUtil | 432 ms | 587 ms | **408 ms** | 671 ms |
-| re2s | **544 ms** | 641 ms | 778 ms | 1084 ms |
-| tastyQuery | **1626 ms** | 1846 ms | 2781 ms | 3714 ms |
-| sourcecode (macros) | **433 ms** | 515 ms | cannot | 592 ms |
+| helloWorld | 73 ms | 84 ms | **33 ms** | 44 ms |
+| dottyUtil | **394 ms** | 534 ms | 463 ms | 662 ms |
+| areWeFastYet | **457 ms** | 569 ms | 810 ms | 958 ms |
+| re2s | **518 ms** | 583 ms | 860 ms | 1151 ms |
+| tastyQuery | **1571 ms** | 1817 ms | 2684 ms | 3588 ms |
+| scalaz | **8784 ms** | 9209 ms | 15902 ms | 25452 ms |
+| sourcecode (macros) | **373 ms** | 462 ms | cannot | 583 ms |
 
 Reading:
 
-- **Cold, the native image wins everything**, by 22x on hello world down to 3.2x on the largest
-  benchmark. The advantage tracks how much of the compile is start-up, so it shrinks as the
-  compile grows — which is the whole story in one line.
-- **Warm, it loses the large ones.** The JIT converges below the native image once it has the
-  chance: native still wins hello world by 2.5x and ties `dottyUtil`, but loses `re2s` by 1.4x
-  and `tastyQuery` by 1.7x. A native `scalac` is the right tool for short compiles, one-shot
-  invocations, CI and editor round-trips, and the wrong one for a long-lived compile server.
-- **The AOT cache is a real but partial answer for the JVM.** It saves 0.8–3.2 s cold, 1.6–2.1x,
-  and closes roughly half the gap to native on hello world. It buys nothing at peak, though —
-  warm it is consistently *slower* than the plain JVM here, on all five benchmarks.
-- **Runtime class loading costs a flat ~1.4x** cold at the same optimisation level, remarkably
-  steady across benchmarks. That is the price of the only configuration that compiles macro code
-  at all.
+- **Cold, the native image wins until the compile gets big.** 21x on hello world, 8.1x on
+  `dottyUtil`, 3.2x on `tastyQuery` — the advantage tracks how much of the run is start-up, so it
+  shrinks as the compile grows. On `scalaz`, at 40'000 lines, it runs out: 19.73 s against the
+  JVM's 19.04 s. The crossover sits between `tastyQuery` and `scalaz`, and past it the AOT-cached
+  JVM is the fastest thing here at 13.40 s.
+- **Warm, the JVM wins everything except hello world.** Give the JIT 20 compiles in one process
+  and it beats the native image by 1.2x on `dottyUtil` and 1.7-1.8x on the larger benchmarks. Only
+  hello world stays native's (2.2x), because it is too small for the JIT to ever pay itself off.
+- **So this is a start-up tool.** It is the right thing for short compiles, one-shot invocations,
+  CI and editor round-trips, and the wrong thing for a long-lived compile server, where a warm JVM
+  is faster and a warm JVM is what you have.
+- **The AOT cache is the JVM's best answer cold, and does nothing warm.** It takes 1.4-2.1x off
+  cold time, enough to win `scalaz` outright. At peak it is *slower* than the plain JVM on all
+  seven benchmarks — it buys class loading and linking, not throughput.
+- **Runtime class loading costs 1.3-1.4x** cold, steady across benchmarks. That is the price of
+  the only configuration that compiles macro code at all, and on `sourcecode` it is still 5.9x
+  faster cold than the JVM that can.
 
 The dry-run workflow re-runs a subset of this on every change; its timings are not comparable, and
 it exists to catch the script breaking and the output diverging. See [bench/](bench/README.md).
