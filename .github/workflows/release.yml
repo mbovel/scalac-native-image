@@ -4,6 +4,8 @@ name: Build and publish scalac-native-image
 #   - multi-arch Docker images on Docker Hub (:slim and :macros, linux/amd64 + linux/arm64)
 #   - standalone binaries for Linux x86_64/aarch64, macOS arm64 and Windows x86_64
 #
+# Triggered by publishing a GitHub Release, or by hand with workflow_dispatch.
+#
 # Every job runs the same docker/scripts/build-native.sh. Linux goes through the
 # Dockerfile (so the published binary is byte-for-byte the one inside the image);
 # macOS and Windows run the script directly, because native-image only ever emits
@@ -25,8 +27,8 @@ on:
         description: Push Docker images to Docker Hub
         type: boolean
         default: true
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -251,8 +253,8 @@ jobs:
           IMAGE="${{ env.IMAGE }}"
           tags="-t $IMAGE:${{ matrix.flavour }}"
           tags="$tags -t $IMAGE:${{ env.SCALA_VERSION }}-${{ matrix.flavour }}"
-          if [ "${{ github.ref_type }}" = tag ]; then
-            tags="$tags -t $IMAGE:${{ github.ref_name }}-${{ matrix.flavour }}"
+          if [ "${{ github.event_name }}" = release ]; then
+            tags="$tags -t $IMAGE:${{ github.event.release.tag_name }}-${{ matrix.flavour }}"
           fi
           if [ "${{ matrix.flavour }}" = slim ]; then
             tags="$tags -t $IMAGE:latest"
@@ -267,7 +269,7 @@ jobs:
   # ---------------------------------------------------------------------------
   release:
     needs: [linux, native]
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'release'
     runs-on: ubuntu-24.04
     permissions:
       contents: write

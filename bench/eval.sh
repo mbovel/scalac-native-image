@@ -36,8 +36,11 @@
 #   --out FILE           write the Markdown report here as well as to stdout
 set -uo pipefail
 
-# declare -A and mapfile: bash 4. macOS ships 3.2 as /bin/bash, so `brew install bash` there.
-[ "${BASH_VERSINFO[0]:-0}" -ge 4 ] || { echo "eval.sh needs bash 4 or newer" >&2; exit 2; }
+# declare -A, mapfile and $EPOCHREALTIME: bash 5. macOS ships 3.2 as /bin/bash, so
+# `brew install bash` there.
+[ "${BASH_VERSINFO[0]:-0}" -ge 5 ] || { echo "eval.sh needs bash 5 or newer" >&2; exit 2; }
+# $EPOCHREALTIME uses the locale's decimal point, and awk below has to parse it.
+export LC_NUMERIC=C
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../docker/scripts/common.sh
@@ -169,37 +172,38 @@ is_macro_bench() { case "$MACRO_BENCHMARKS" in *" $1 "*) return 0 ;; esac; retur
 IFS=, read -ra NAMES <<< "$BENCHMARKS"
 LABELS=(jvm jvm-aot native-O3 native-rcl-O3)
 
-# The command that runs the compiler once, for a configuration. The native bundles supply their
-# own -bootclasspath and default -classpath; -classpath below overrides the latter for all four.
-cmd_of() { # cmd_of <label> <benchmark> -> argv on stdout, one word per line
-  case "$1" in
-    jvm)           printf '%s\n' java -cp "$CP" dotty.tools.dotc.Main ;;
-    jvm-aot)       printf '%s\n' java "-XX:AOTCache=$WORK_DIR/aot/$2-cold.aot" -cp "$CP" dotty.tools.dotc.Main ;;
-    native-O3)     printf '%s\n' "$SLIM_DIR/scalac$EXE_SUFFIX" ;;
-    native-rcl-O3) printf '%s\n' "$RCL_DIR/scalac$EXE_SUFFIX" ;;
-  esac
-}
-# Same, for the in-process loop: the JVM goes through Loop, the images through their own hook.
-loop_cmd_of() {
-  case "$1" in
-    jvm)           printf '%s\n' java -cp "$CP$CPSEP$LOOP_JAR" Loop "$ITERATIONS" ;;
-    jvm-aot)       printf '%s\n' java "-XX:AOTCache=$WORK_DIR/aot/$2-warm.aot" -cp "$CP$CPSEP$LOOP_JAR" Loop "$ITERATIONS" ;;
-    native-O3)     printf '%s\n' "$SLIM_DIR/scalac$EXE_SUFFIX" ;;
-    native-rcl-O3) printf '%s\n' "$RCL_DIR/scalac$EXE_SUFFIX" ;;
+# Every invocation in one table. The native bundles supply their own -bootclasspath and default
+# -classpath; the -classpath in ARGS below overrides the latter for all four configurations.
+#
+# cold runs the compiler once and is timed by wall clock, so it includes process start-up -- the
+# thing this whole exercise is about. warm runs it $ITERATIONS times inside one process and reads
+# the per-iteration times back out: through Loop for the JVM, through the binary's own
+# SCALAC_BENCH_ITERATIONS hook for the images, so the warm number describes the shipped executable.
+set_cmd() { # set_cmd <label> <benchmark> <cold|warm> -> CMD
+  local slim="$SLIM_DIR/scalac$EXE_SUFFIX" rcl="$RCL_DIR/scalac$EXE_SUFFIX"
+  case "$1:$3" in
+    jvm:cold)           CMD=(java -cp "$CP" dotty.tools.dotc.Main) ;;
+    jvm:warm)           CMD=(java -cp "$CP$CPSEP$LOOP_JAR" Loop "$ITERATIONS") ;;
+    jvm-aot:cold)       CMD=(java "-XX:AOTCache=$WORK_DIR/aot/$2-cold.aot" -cp "$CP" dotty.tools.dotc.Main) ;;
+    jvm-aot:warm)       CMD=(java "-XX:AOTCache=$WORK_DIR/aot/$2-warm.aot" -cp "$CP$CPSEP$LOOP_JAR" Loop "$ITERATIONS") ;;
+    native-O3:cold)     CMD=("$slim") ;;
+    native-O3:warm)     CMD=(env "SCALAC_BENCH_ITERATIONS=$ITERATIONS" "$slim") ;;
+    native-rcl-O3:cold) CMD=("$rcl") ;;
+    native-rcl-O3:warm) CMD=(env "SCALAC_BENCH_ITERATIONS=$ITERATIONS" "$rcl") ;;
+    *) die "no command for $1 ($3)" ;;
   esac
 }
 
 # ---------------------------------------------------------------------------
-# Timing. Bash's own `time` rather than /usr/bin/time, which is GNU-only.
+# Timing. $EPOCHREALTIME rather than /usr/bin/time, which is GNU-only, or bash's `time`, which
+# reports through a subshell and so cannot hand back the command's exit status.
 # ---------------------------------------------------------------------------
-TIMEFORMAT='%3R'
 LAST_RC=0
 timed() { # timed <logfile> <argv...> -> elapsed seconds on stdout, exit status in LAST_RC
-  local log="$1"; shift
-  local rc="$log.rc" t
-  t=$( { time { "$@" >"$log" 2>&1; printf '%s' "$?" >"$rc"; }; } 2>&1 )
-  LAST_RC="$(cat "$rc" 2>/dev/null || echo 1)"; rm -f "$rc"
-  printf '%s' "$t"
+  local log="$1" t0; shift
+  t0=$EPOCHREALTIME
+  "$@" >"$log" 2>&1; LAST_RC=$?
+  awk -v a="$t0" -v b="$EPOCHREALTIME" 'BEGIN { printf "%.3f", b - a }'
 }
 min2() { awk -v a="$1" -v b="$2" 'BEGIN{ if (a == "" || b+0 < a+0) print b; else print a }'; }
 
@@ -248,88 +252,69 @@ if [ "$AOT_OK" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Cold: best of REPS fresh processes.
+# Measure. One pass: for each benchmark, each configuration is run cold, checked against the
+# JVM's output, and then run warm. The order of LABELS matters -- jvm comes first, so its output
+# is on disk to diff the others against.
 # ---------------------------------------------------------------------------
-if [ "$DO_COLD" = 1 ]; then
-  log "cold: best of $REPS fresh processes"
-  for name in "${NAMES[@]}"; do
-    mapfile -t SRCS < <(srcs_of "$name"); mapfile -t X < <(extra_of "$name")
-    for label in "${LABELS[@]}"; do
-      key="$name/$label"
-      if [ "$label" = jvm-aot ] && { [ "$AOT_OK" = 0 ] || [ ! -s "$WORK_DIR/aot/$name-cold.aot" ]; }; then
-        COLD[$key]=n/a; STATUS[$key]=skipped; continue
-      fi
-      mapfile -t C < <(cmd_of "$label" "$name")
-      out="out-$name-$label"; best=""
+log "per configuration: cold seconds (best of $REPS) / warm ms (min of the last $WARM_TAIL of $ITERATIONS)"
+for name in "${NAMES[@]}"; do
+  mapfile -t SRCS < <(srcs_of "$name"); mapfile -t X < <(extra_of "$name")
+  ARGS=(-classpath "$LIBCP" "${SHARED[@]}" ${X[@]+"${X[@]}"})
+
+  for label in "${LABELS[@]}"; do
+    key="$name/$label"
+    COLD[$key]=n/a; WARM[$key]=n/a; ITER0[$key]=n/a; STATUS[$key]=
+
+    # A benchmark the JVM could not train a cache for has no jvm-aot column.
+    if [ "$label" = jvm-aot ] && { [ "$AOT_OK" = 0 ] || [ ! -s "$WORK_DIR/aot/$name-cold.aot" ]; }; then
+      STATUS[$key]=skipped; continue
+    fi
+
+    if [ "$DO_COLD" = 1 ]; then
+      set_cmd "$label" "$name" cold
+      out="out-$name-$label"; best=
       for i in $(seq 1 "$REPS"); do
         rm -rf "$out"; mkdir -p "$out"
-        t="$(timed "$LOGS/cold-$name-$label-$i.log" "${C[@]}" \
-              -classpath "$LIBCP" "${SHARED[@]}" ${X[@]+"${X[@]}"} -d "$out" "${SRCS[@]}")"
+        t="$(timed "$LOGS/cold-$name-$label-$i.log" "${CMD[@]}" "${ARGS[@]}" -d "$out" "${SRCS[@]}")"
         [ "$LAST_RC" = 0 ] && best="$(min2 "$best" "$t")"
       done
-      if [ -z "$best" ]; then COLD[$key]=fail; STATUS[$key]=fail
-      else COLD[$key]="$best"; STATUS[$key]=ok; fi
-    done
-
-    # Correctness: every configuration's class files and TASTy against the JVM's.
-    for label in "${LABELS[@]}"; do
-      key="$name/$label"
-      [ "$label" = jvm ] && continue
-      [ "${STATUS[$key]}" = ok ] || continue
-      if diff -rq "out-$name-jvm" "out-$name-$label" >/dev/null 2>&1; then
-        STATUS[$key]=identical
+      if [ -z "$best" ]; then
+        STATUS[$key]=fail; COLD[$key]=fail
       else
-        STATUS[$key]=DIFFERS
+        COLD[$key]="$best"; STATUS[$key]=ok
+        # Correctness: the class files and TASTy, against the JVM's own.
+        if [ "$label" != jvm ]; then
+          if diff -rq "out-$name-jvm" "$out" >/dev/null 2>&1; then STATUS[$key]=identical
+          else STATUS[$key]=DIFFERS; fi
+        fi
       fi
-    done
-    # The closed-world image on macro code: it emits the macro-defining class files, errors on
-    # every use site, and does so quickly. Reporting that as a time would be flattering nonsense.
-    if is_macro_bench "$name"; then
-      key="$name/native-O3"
-      case "${STATUS[$key]}" in DIFFERS|fail) STATUS[$key]=no-macros; COLD[$key]=n/a ;; esac
+      # The closed-world image on macro code: it emits the macro-defining class files, errors on
+      # every use site, and does so quickly. Reporting that as a time would be flattering nonsense.
+      if [ "$label" = native-O3 ] && is_macro_bench "$name"; then
+        case "${STATUS[$key]}" in DIFFERS|fail) STATUS[$key]=no-macros; COLD[$key]=n/a ;; esac
+      fi
     fi
-    printf '  %-11s %s\n' "$name" \
-      "$(for l in "${LABELS[@]}"; do printf '%s=%s(%s) ' "$l" "${COLD[$name/$l]}" "${STATUS[$name/$l]}"; done)"
-  done
-fi
 
-# ---------------------------------------------------------------------------
-# Warm: ITERATIONS compiles in one process, min of the last WARM_TAIL.
-# ---------------------------------------------------------------------------
-if [ "$DO_WARM" = 1 ]; then
-  log "warm: $ITERATIONS in-process iterations, min of the last $WARM_TAIL"
-  for name in "${NAMES[@]}"; do
-    mapfile -t SRCS < <(srcs_of "$name"); mapfile -t X < <(extra_of "$name")
-    for label in "${LABELS[@]}"; do
-      key="$name/$label"
-      if [ "$label" = jvm-aot ] && { [ "$AOT_OK" = 0 ] || [ ! -s "$WORK_DIR/aot/$name-warm.aot" ]; }; then
-        WARM[$key]=n/a; ITER0[$key]=n/a; continue
-      fi
-      mapfile -t C < <(loop_cmd_of "$label" "$name")
+    if [ "$DO_WARM" = 1 ] && [ "${STATUS[$key]}" != no-macros ]; then
+      set_cmd "$label" "$name" warm
       out="w-$name-$label"; rm -rf "$out"; mkdir -p "$out"
       lg="$LOGS/warm-$name-$label.log"
-      case "$label" in
-        native-*) SCALAC_BENCH_ITERATIONS="$ITERATIONS" "${C[@]}" \
-                    -classpath "$LIBCP" "${SHARED[@]}" ${X[@]+"${X[@]}"} -d "$out" "${SRCS[@]}" >"$lg" 2>&1 ;;
-        *)        "${C[@]}" \
-                    -classpath "$LIBCP" "${SHARED[@]}" ${X[@]+"${X[@]}"} -d "$out" "${SRCS[@]}" >"$lg" 2>&1 ;;
-      esac
+      "${CMD[@]}" "${ARGS[@]}" -d "$out" "${SRCS[@]}" >"$lg" 2>&1
       mapfile -t MS < <(sed -n 's/^iter [0-9]*: \([0-9]*\) ms.*/\1/p' "$lg")
       # Both harnesses tag an iteration that reported errors. A compile that gave up is fast and
       # meaningless, so it gets no number.
-      if [ "${STATUS[$key]:-}" = no-macros ]; then
-        WARM[$key]=n/a; ITER0[$key]=n/a
-      elif grep -q '\[ERRORS\]' "$lg" || [ "${#MS[@]}" -lt "$ITERATIONS" ]; then
+      if grep -q '\[ERRORS\]' "$lg" || [ "${#MS[@]}" -lt "$ITERATIONS" ]; then
         WARM[$key]=fail; ITER0[$key]=fail
       else
         ITER0[$key]="${MS[0]}"
         WARM[$key]="$(printf '%s\n' "${MS[@]: -$WARM_TAIL}" | sort -n | head -1)"
       fi
-    done
-    printf '  %-11s %s\n' "$name" \
-      "$(for l in "${LABELS[@]}"; do printf '%s=%sms ' "$l" "${WARM[$name/$l]}"; done)"
+    fi
   done
-fi
+
+  printf '  %-11s %s\n' "$name" \
+    "$(for l in "${LABELS[@]}"; do printf '%s=%s/%s ' "$l" "${COLD[$name/$l]}" "${WARM[$name/$l]}"; done)"
+done
 
 # ---------------------------------------------------------------------------
 # Report.

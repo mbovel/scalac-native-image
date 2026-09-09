@@ -202,8 +202,11 @@ binaries: native-image only ever targets the machine it runs on, so those platfo
 through a Linux container. Linux goes through the Dockerfile, so the published binary is
 byte-for-byte the one inside the published image.
 
-Publishing needs a `DOCKERHUB_TOKEN` secret (a Docker Hub access token with Read & Write on the
-repository); without it, run the workflow with `publish-images` off.
+Publishing a GitHub Release runs that workflow, which pushes the images and attaches the binaries
+to the release once the builds finish — so a freshly published release has no assets for the
+first quarter of an hour. `workflow_dispatch` runs it by hand. Either way it needs a
+`DOCKERHUB_TOKEN` secret (a Docker Hub access token with Read & Write on the repository); without
+one, run it with `publish-images` off.
 
 ## Development container
 
