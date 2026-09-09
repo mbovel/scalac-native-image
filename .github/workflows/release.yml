@@ -141,7 +141,9 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || inputs.publish-images
         run: |
           mkdir -p digests
-          touch "digests/${{ matrix.flavour }}-$(echo '${{ steps.push.outputs.digest }}' | cut -d: -f2)"
+          # The name is the digest and nothing else: the manifest job turns each file name back
+          # into "$IMAGE@sha256:<name>". The flavour lives in the artifact name, not in here.
+          touch "digests/$(echo '${{ steps.push.outputs.digest }}' | cut -d: -f2)"
 
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'workflow_dispatch' || inputs.publish-images
@@ -314,7 +316,7 @@ jobs:
           fi
           # shellcheck disable=SC2046
           docker buildx imagetools create $tags \
-            $(for f in digests/${{ matrix.flavour }}-*; do echo "$IMAGE@sha256:$(basename "$f")"; done)
+            $(for f in digests/*; do echo "$IMAGE@sha256:$(basename "$f")"; done)
           docker buildx imagetools inspect "$IMAGE:${{ matrix.flavour }}"
 
   # ---------------------------------------------------------------------------
