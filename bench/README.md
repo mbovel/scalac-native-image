@@ -8,7 +8,7 @@ Scala 3 compiler, and checks that all four emit the same bytes.
 | `jvm` | `java -cp <compiler jars> dotty.tools.dotc.Main` |
 | `jvm-aot` | the same, with a JDK 25 AOT cache (JEP 483/514/515) trained per benchmark |
 | `native-O3` | the `:slim` image — `native-image -O3`, closed world |
-| `native-rcl-O3` | the `:macros` image — `-O3` plus `-H:+RuntimeClassLoading` |
+| `native-rcl-O3` | the `:macros` image — `-O3` plus **rcl**, runtime class loading (`-H:+RuntimeClassLoading`) |
 
 ```bash
 bench/eval.sh                        # builds both images, runs everything, ~40 min

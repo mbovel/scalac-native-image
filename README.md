@@ -20,6 +20,11 @@ configurations run on Temurin 25.0.3 at default heap. The corpus is
 [scala3-benchmarks](https://github.com/lampepfl/scala3-benchmarks) at `99ac20c5476e`, compiled
 with the same flags its own `build.sbt` uses.
 
+The four configurations are `jvm` (`dotty.tools.dotc.Main` on the JVM), `jvm-aot` (the same with
+a JDK 25 AOT cache trained per benchmark), and the two published images: `native-O3` is `:slim`,
+built closed-world, and `native-rcl-O3` is `:macros`, built with **rcl** — GraalVM's *runtime
+class loading*, `-H:+RuntimeClassLoading` — which is what lets it expand macros.
+
 Every number below is a compile whose class files and TASTy came out byte-for-byte identical to
 the JVM compiler's. `bench/eval.sh` reports no time for anything else, which matters more than it
 sounds — see [step 1](#1-record-reachability-metadata-with-the-tracing-agent).
