@@ -175,8 +175,12 @@ jobs:
       matrix:
         include:
           - { os: macos,   arch: aarch64, runner: macos-15,     flavour: slim,   macros: "false", xmx: 5g }
-          - { os: windows, arch: x86_64,  runner: windows-2022, flavour: slim,   macros: "false", xmx: 12g }
-          - { os: windows, arch: x86_64,  runner: windows-2022, flavour: macros, macros: "true",  xmx: 12g }
+          # Windows is disabled, not removed. native-image cannot link its own query code on
+          # either image: LNK1104 on LIBCMT.lib, with the static CRT present and on LIB in both
+          # cases (windows-2022 / VS 2022 14.44.35207, and windows-2025 / VS 2026 14.51.36231).
+          # Re-enable by uncommenting; the MSVC setup step above is already version-agnostic.
+          # - { os: windows, arch: x86_64,  runner: windows-2022, flavour: slim,   macros: "false", xmx: 12g }
+          # - { os: windows, arch: x86_64,  runner: windows-2022, flavour: macros, macros: "true",  xmx: 12g }
     steps:
       - uses: actions/checkout@v5
 

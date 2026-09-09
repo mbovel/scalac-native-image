@@ -13,6 +13,13 @@ Two flavours, because macros are the hard part:
 | `:slim` | `-O3`, closed world | 113 MB | no |
 | `:macros` | `-O3` plus `-H:+RuntimeClassLoading` | 452 MB | yes |
 
+> [!NOTE]
+> This repository is a proof of concept, vibe-coded end to end with Claude Code — the build
+> scripts, the Dockerfile, the CI workflows, the evaluation harness and this README. The
+> measurements below are real and reproducible with `bench/eval.sh`, and the compiler's output is
+> checked byte-for-byte against the JVM's on every run; the code around them has had far less
+> human review than its volume suggests. Read it with that in mind.
+
 ## Results
 
 Scala 3.9.0 and GraalVM CE 25.3.4.1, on an otherwise idle 96-core Linux x86_64 machine; the JVM
@@ -90,8 +97,10 @@ The images are published to Docker Hub as
 No flags needed: the entry point supplies `-bootclasspath` and a default `-classpath` itself.
 Both are only defaults — pass either flag and yours wins.
 
-Standalone binaries for Linux x86_64/aarch64, macOS arm64 and Windows x86_64 are attached to each
-release. Unpack the directory and keep it together: the executable looks for `java.base.jar` and
+Standalone binaries for Linux x86_64/aarch64 and macOS arm64 are attached to each release.
+Windows is not currently built: native-image cannot link its own query code on the GitHub runners
+(`LNK1104: cannot open file 'LIBCMT.lib'`), on both the VS 2022 and VS 2026 images. The job is
+disabled rather than removed, in `.github/workflows/release.yml`. Unpack the directory and keep it together: the executable looks for `java.base.jar` and
 `lib/` next to itself.
 
 If the code you compile uses macros — most Scala libraries do somewhere — use `:macros`. `:slim`
@@ -133,7 +142,9 @@ So compile something once under `-agentlib:native-image-agent` and build with
 `-H:ConfigurationFileDirectories`. The tracing-agent run is not optional.
 
 Thanks to [@mukel](https://github.com/mukel), who worked out the tracing and reflection
-configuration.
+configuration, and to [@KomOnni](https://github.com/KomOnni), who spotted on the issue that the
+missing piece was `-H:ConfigurationFileDirectories` and posted a scala-cli invocation that
+compiled hello world with it.
 
 This failure mode is why the evaluation diffs every configuration's output against the JVM's
 rather than trusting an exit code: an image with this bug still "succeeds" at everything a
