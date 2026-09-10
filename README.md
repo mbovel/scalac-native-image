@@ -143,8 +143,7 @@ So compile something once under `-agentlib:native-image-agent` and build with
 
 Thanks to [@mukel](https://github.com/mukel), who worked out the tracing and reflection
 configuration, and to [@KomOnni](https://github.com/KomOnni), who spotted on the issue that the
-missing piece was `-H:ConfigurationFileDirectories` and posted a scala-cli invocation that
-compiled hello world with it.
+missing piece was `-H:ConfigurationFileDirectories`.
 
 This failure mode is why the evaluation diffs every configuration's output against the JVM's
 rather than trusting an exit code: an image with this bug still "succeeds" at everything a
