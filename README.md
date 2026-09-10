@@ -1,7 +1,7 @@
 # scalac-native-image
 
 The Scala 3 compiler (`dotty.tools.dotc.Main`) built into a native executable with GraalVM
-native-image, published as a Docker image and as standalone binaries for Linux, macOS and Windows.
+native-image, published as a Docker image and as standalone binaries for Linux and macOS.
 
 The point is start-up time. `scalac` on the JVM spends over a second loading and JIT-compiling itself
 before it looks at your code, which is most of the cost of compiling anything small.
@@ -19,6 +19,35 @@ Two flavours, because macros are the hard part:
 > measurements below are real and reproducible with `bench/eval.sh`, and the compiler's output is
 > checked byte-for-byte against the JVM's on every run; the code around them has had far less
 > human review than its volume suggests. Read it with that in mind.
+
+## Using it
+
+Through Docker, with nothing to install:
+
+```bash
+docker run --rm -v "$PWD:/src" -w /src mbovel/scalac-native-image:slim -d out hello.scala
+```
+
+Or take a binary from the [latest release](https://github.com/mbovel/scalac-native-image/releases/latest)
+— Linux x86_64/aarch64, macOS arm64:
+
+```bash
+tar xzf scalac-native-image-slim-linux-x86_64.tar.gz
+./scalac-native-image-slim-linux-x86_64/scalac -d out hello.scala
+```
+
+Keep the unpacked directory together: `scalac` looks for `java.base.jar` and `lib/` beside
+itself. Windows is not currently built (see [Building](#building)).
+
+Either way there are no flags to pass — the executable supplies `-bootclasspath` and a default
+`-classpath` itself, and both are only defaults, so pass either flag and yours wins.
+
+Use **`:macros`** if the code you compile expands macros, which most Scala libraries do somewhere.
+`:slim` does not fail loudly on it: it emits the macro-*defining* class files and then errors on
+every use site, with the misleading message `Cyclic macro dependencies`.
+
+Docker adds a flat ~0.27 s of container start-up per invocation — more than a hello-world compile
+takes. Reach for the binary where that matters, and the image for CI.
 
 ## Results
 
@@ -82,30 +111,6 @@ Reading:
 
 The dry-run workflow re-runs a subset of this on every change; its timings are not comparable, and
 it exists to catch the script breaking and the output diverging. See [bench/](bench/README.md).
-
-## Using it
-
-```bash
-docker run --rm -v "$PWD:/src" -w /src mbovel/scalac-native-image:slim -d out hello.scala
-```
-
-The images are published to Docker Hub as
-[`mbovel/scalac-native-image`](https://hub.docker.com/r/mbovel/scalac-native-image), tagged
-`:slim`, `:macros`, `:<scala-version>-<flavour>` and `:latest`, for `linux/amd64` and
-`linux/arm64`.
-
-No flags needed: the entry point supplies `-bootclasspath` and a default `-classpath` itself.
-Both are only defaults — pass either flag and yours wins.
-
-Standalone binaries for Linux x86_64/aarch64 and macOS arm64 are attached to each release.
-Windows is not currently built: native-image cannot link its own query code on the GitHub runners
-(`LNK1104: cannot open file 'LIBCMT.lib'`), on both the VS 2022 and VS 2026 images. The job is
-disabled rather than removed, in `.github/workflows/release.yml`. Unpack the directory and keep it together: the executable looks for `java.base.jar` and
-`lib/` next to itself.
-
-If the code you compile uses macros — most Scala libraries do somewhere — use `:macros`. `:slim`
-does not fail loudly on macro code: it emits the macro-*defining* class files and then errors on
-every use site, with the misleading message `Cyclic macro dependencies`.
 
 ## Layout
 
@@ -220,10 +225,15 @@ docker build -t scalac-native-image:macros --build-arg MACROS=true .
 
 The build flow lives in `docker/scripts/`, which the Dockerfile calls and which also runs
 directly on machines without Docker. That is how
-[.github/workflows/release.yml](.github/workflows/release.yml) builds the macOS and Windows
-binaries: native-image only ever targets the machine it runs on, so those platforms cannot go
-through a Linux container. Linux goes through the Dockerfile, so the published binary is
-byte-for-byte the one inside the published image.
+[.github/workflows/release.yml](.github/workflows/release.yml) builds the macOS binaries:
+native-image only ever targets the machine it runs on, so that platform cannot go through a Linux
+container. Linux goes through the Dockerfile, so the published binary is byte-for-byte the one
+inside the published image.
+
+Windows is disabled, not removed: native-image fails compiling its own query code with
+`LNK1104: cannot open file 'LIBCMT.lib'` on both GitHub runner images, with the static CRT present
+and on `LIB` in each case. The two matrix entries are commented out in the workflow, and
+[docker/README.md](docker/README.md) records what was ruled out.
 
 Publishing a GitHub Release runs that workflow, which pushes the images and attaches the binaries
 to the release once the builds finish — so a freshly published release has no assets for the
